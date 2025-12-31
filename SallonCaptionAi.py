@@ -1,201 +1,235 @@
 import os
-import time
-import requests
-from dotenv import load_dotenv
+import logging
+import sys
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# =====================
-# Load ENV
-# =====================
-load_dotenv()
+# ==================== تنظیمات لاگ ====================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # برای نمایش در Railway
+        logging.FileHandler('bot.log')      # ذخیره در فایل
+    ]
+)
+logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# ==================== توکن ربات ====================
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise ValueError("❌ BOT_TOKEN یا OPENAI_API_KEY ست نشده")
+if not TOKEN:
+    logger.error("❌ خطا: توکن تلگرام یافت نشد!")
+    logger.error("لطفاً در Railway متغیر TELEGRAM_BOT_TOKEN را تنظیم کنید")
+    sys.exit(1)
 
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+logger.info("=" * 50)
+logger.info("🚀 ربات کپشن‌نویس سالن زیبایی")
+logger.info(f"✅ توکن دریافت شد: {TOKEN[:10]}...")
+logger.info("=" * 50)
 
-# =====================
-# User State
-# =====================
-users = {}
+# ==================== کپشن‌های آماده ====================
+BEAUTY_CAPTIONS = {
+    "ناخن": [
+        "💅 طراحی ناخن با جدیدترین مدل‌های ۲۰۲۴\n#ناخن #مانیکور #سالن_زیبایی #زیبایی",
+        "✨ ناخن‌های فانتزی برای مهمانی‌های خاص\n#طراحی_ناخن #زیبایی_ناخن #ناخن_ایرانی",
+        "🌸 ترکیب رنگ‌های بهاری روی ناخن‌های شما\n#بهار #ناخن_رنگی #سالن_زیبایی_تهران"
+    ],
+    "مو": [
+        "💇‍♀️ کوتاهی و استایل مو با مشاوره رایگان\n#آرایشگاه #کوتاهی_مو #رنگ_مو",
+        "🌟 هایلایت حرفه‌ای با بهترین رنگ‌های اروپایی\n#مو #هایلایت #بالیاژ",
+        "🌺 کراتینه و صاف کردن مو بدون فرمالدهید\n#کراتینه #مو_صاف #سالن_زیبایی"
+    ],
+    "پوست": [
+        "💆‍♀️ فیشیال و پاکسازی عمقی پوست\n#فیشیال #پوست #مراقبت_پوست",
+        "✨ میکرونیدلینگ با جدیدترین دستگاه‌ها\n#جوانسازی #میکرونیدلینگ #زیبایی",
+        "🌸 پیلینگ شیمیایی با مشاوره پوست‌شناسی\n#پیلینگ #لایه_برداری #پوست_شاداب"
+    ],
+    "میکاپ": [
+        "💄 میکاپ عروس و مهمانی توسط آرایشگران حرفه‌ای\n#میکاپ #عروس #آرایش",
+        "🌟 میکاپ طبیعی و روزمره با محصولات اورگانیک\n#میکاپ_طبیعی #آرایش_سبک",
+        "🌺 آموزش آرایش خصوصی در سالن ما\n#آموزش_آرایش #میکاپ_آموزشی"
+    ]
+}
 
-# =====================
-# Telegram Helpers
-# =====================
-def get_updates(offset=None):
-    try:
-        params = {"timeout": 60}
-        if offset:
-            params["offset"] = offset
-        r = requests.get(
-            f"{BASE_URL}/getUpdates",
-            params=params,
-            timeout=(10, 70)
-        )
-        return r.json()
-    except Exception as e:
-        print("❌ getUpdates error:", e)
-        return {"ok": False}
+# ==================== دستورات ربات ====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /start"""
+    user = update.effective_user
+    logger.info(f"👤 کاربر جدید: {user.id} ({user.username})")
+    
+    welcome = f"""
+سلام {user.first_name} عزیز! 🌸
 
-def send_message(chat_id, text, reply_markup=None):
-    try:
-        payload = {
-            "chat_id": chat_id,
-            "text": text
-        }
-        if reply_markup:
-            payload["reply_markup"] = reply_markup
+به ربات کپشن‌نویس سالن زیبایی خوش آمدید!
 
-        requests.post(
-            f"{BASE_URL}/sendMessage",
-            json=payload,
-            timeout=15
-        )
-    except Exception as e:
-        print("❌ sendMessage error:", e)
+🎯 **دستورات:**
+/start - راه‌اندازی مجدد
+/help - راهنمای استفاده  
+/services - خدمات سالن
+/caption - دریافت کپشن
 
-# =====================
-# OpenAI Caption
-# =====================
-def generate_caption(plan, topic, details):
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
+💡 **نحوه استفاده:**
+کافیست بنویسید: ناخن، مو، پوست یا میکاپ
 
-    system_prompt = {
-        "basic": "یک کپشن ساده و کوتاه اینستاگرامی برای سالن زیبایی بنویس.",
-        "pro": "یک کپشن حرفه‌ای اینستاگرامی با CTA و هشتگ بنویس.",
-        "vip": "یک کپشن بسیار حرفه‌ای، احساسی، فروش‌محور با هشتگ هدفمند بنویس."
-    }[plan]
+📞 پشتیبانی: @your_support
+    """
+    await update.message.reply_text(welcome)
 
-    prompt = f"""
-موضوع: {topic}
-جزئیات: {details}
-"""
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /help"""
+    help_text = """
+📖 **راهنمای ربات:**
 
-    payload = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.8
-    }
+1. برای دریافت کپشن، یکی از کلمات زیر را بنویسید:
+   • ناخن
+   • مو  
+   • پوست
+   • میکاپ
 
-    try:
-        r = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        data = r.json()
-        return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        print("❌ OpenAI error:", e)
-        return "❌ خطا در تولید کپشن"
+2. هر کپشن شامل:
+   ✓ متن جذاب
+   ✓ هشتگ‌های بهینه
+   ✓ مناسب اینستاگرام
 
-# =====================
-# Bot Logic
-# =====================
-def handle_start(chat_id):
-    users[chat_id] = {
-        "state": "CHOOSE_PLAN",
-        "plan": None,
-        "topic": None
-    }
+3. دستورات:
+   /start - شروع
+   /help - این راهنما
+   /services - لیست خدمات
+   /caption - درخواست کپشن
 
-    text = (
-        "🤖 ربات تولید کپشن اینستاگرام مخصوص سالن‌های زیبایی\n\n"
-        "🎁 می‌تونی پلن‌ها رو تست کنی و تفاوت خروجی رو ببینی\n"
-        "👇 یکی رو انتخاب کن:"
+4. تماس:
+   📱 ۰۹۱۲XXXXXXX
+   📍 تهران، میدان ولیعصر
+    """
+    await update.message.reply_text(help_text)
+
+async def services_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /services"""
+    services = """
+💎 **خدمات سالن زیبایی:**
+
+1. **ناخن‌کاری:**
+   • طراحی ناخن
+   • ژل و اکریلیک
+   • ناخن عروس
+
+2. **آرایش مو:**
+   • کوتاهی و استایل
+   • رنگ، هایلایت، بالیاژ
+   • کراتینه و صاف
+
+3. **مراقبت پوست:**
+   • پاکسازی و فیشیال
+   • میکرونیدلینگ
+   • پیلینگ شیمیایی
+
+4. **آرایش صورت:**
+   • میکاپ عروس
+   • میکاپ مهمانی
+   • آموزش آرایش
+
+⏰ ساعت کاری: ۹ صبح تا ۹ شب
+    """
+    await update.message.reply_text(services)
+
+async def caption_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /caption"""
+    await update.message.reply_text(
+        "لطفاً نوع خدمت را انتخاب کنید:\n\n"
+        "ناخن 💅\nمو 💇‍♀️\nپوست 💆‍♀️\nمیکاپ 💄"
     )
 
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "🟦 پلن پایه", "callback_data": "plan_basic"}],
-            [{"text": "🟪 پلن حرفه‌ای", "callback_data": "plan_pro"}],
-            [{"text": "🟨 پلن VIP", "callback_data": "plan_vip"}]
-        ]
-    }
-
-    send_message(chat_id, text, keyboard)
-
-def handle_callback(chat_id, data):
-    if chat_id not in users:
-        return
-
-    if data.startswith("plan_"):
-        plan = data.replace("plan_", "")
-        users[chat_id]["plan"] = plan
-        users[chat_id]["state"] = "GET_TOPIC"
-
-        send_message(
-            chat_id,
-            "✍️ موضوع پست چیه؟\nمثلاً: کاشت ناخن، رنگ مو، فیشیال"
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش پیام‌های متنی"""
+    user_input = update.message.text.strip().lower()
+    user_id = update.effective_user.id
+    
+    logger.info(f"📩 پیام از {user_id}: {user_input}")
+    
+    # بررسی خدمت درخواستی
+    found_service = None
+    for service in BEAUTY_CAPTIONS:
+        if service in user_input:
+            found_service = service
+            break
+    
+    if found_service:
+        import random
+        from datetime import datetime
+        
+        # انتخاب کپشن تصادفی
+        caption = random.choice(BEAUTY_CAPTIONS[found_service])
+        
+        # افزودن تاریخ
+        now = datetime.now().strftime("%Y/%m/%d %H:%M")
+        caption += f"\n\n📅 {now}"
+        
+        # افزودن اطلاعات تماس
+        caption += "\n📍 تهران، میدان ولیعصر"
+        caption += "\n📱 ۰۹۱۲XXXXXXX"
+        caption += "\n🌸 @beauty_salon_iran"
+        
+        await update.message.reply_text(caption)
+        logger.info(f"✅ ارسال کپشن {found_service} به {user_id}")
+        
+        # ارسال پیشنهاد اضافی
+        await update.message.reply_text(
+            f"💡 برای {found_service} می‌توانید از خدمات زیر استفاده کنید:\n"
+            f"• مشاوره رایگان\n• نوبت آنلاین\n• تخفیف ویژه"
+        )
+    else:
+        await update.message.reply_text(
+            "لطفاً یکی از خدمات زیر را بنویسید:\n"
+            "• ناخن\n• مو\n• پوست\n• میکاپ\n\n"
+            "یا از /help کمک بگیرید."
         )
 
-def handle_text(chat_id, text):
-    if chat_id not in users:
-        handle_start(chat_id)
-        return
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت خطاها"""
+    logger.error(f"⚠️ خطا: {context.error}")
+    if update and update.message:
+        await update.message.reply_text("⚠️ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
-    state = users[chat_id]["state"]
-
-    if state == "GET_TOPIC":
-        users[chat_id]["topic"] = text
-        users[chat_id]["state"] = "GET_DETAILS"
-
-        send_message(
-            chat_id,
-            "📝 یک توضیح کوتاه بده:\nمثلاً نوع خدمات، حس پست، مخاطب هدف"
-        )
-
-    elif state == "GET_DETAILS":
-        plan = users[chat_id]["plan"]
-        topic = users[chat_id]["topic"]
-
-        caption = generate_caption(plan, topic, text)
-
-        send_message(
-            chat_id,
-            f"✨ کپشن پیشنهادی ({plan.upper()}):\n\n{caption}"
-        )
-
-        users[chat_id]["state"] = "CHOOSE_PLAN"
-
-# =====================
-# Main Loop
-# =====================
+# ==================== تابع اصلی ====================
 def main():
-    offset = None
-    print("🤖 Bot is running...")
-
-    while True:
-        updates = get_updates(offset)
-        if updates.get("ok"):
-            for update in updates["result"]:
-                offset = update["update_id"] + 1
-
-                if "message" in update:
-                    msg = update["message"]
-                    chat_id = msg["chat"]["id"]
-                    text = msg.get("text", "")
-
-                    if text.lower() == "/start":
-                        handle_start(chat_id)
-                    else:
-                        handle_text(chat_id, text)
-
-                elif "callback_query" in update:
-                    cb = update["callback_query"]
-                    chat_id = cb["message"]["chat"]["id"]
-                    handle_callback(chat_id, cb["data"])
-
-        time.sleep(1)
+    """تابع اصلی اجرای ربات"""
+    try:
+        # ایجاد اپلیکیشن
+        app = Application.builder().token(TOKEN).build()
+        logger.info("✅ اپلیکیشن ساخته شد")
+        
+        # افزودن دستورات
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("services", services_command))
+        app.add_handler(CommandHandler("caption", caption_command))
+        
+        # افزودن هندلر پیام متنی
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # افزودن هندلر خطا
+        app.add_error_handler(error_handler)
+        
+        # شروع ربات
+        logger.info("🤖 شروع ربات تلگرام...")
+        print("\n" + "="*50)
+        print("🤖 ربات فعال شد!")
+        print(f"🆔 توکن: {TOKEN[:15]}...")
+        print("📡 در حال دریافت پیام‌ها...")
+        print("="*50 + "\n")
+        
+        app.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+            timeout=30,
+            pool_timeout=30
+        )
+        
+    except Exception as e:
+        logger.error(f"🔥 خطای بحرانی: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
     main()

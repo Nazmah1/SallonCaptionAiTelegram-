@@ -1,1 +1,1 @@
-worker: python SallonCaptionAi.py
+worker: python SallonCaptionAiTelegram.py
